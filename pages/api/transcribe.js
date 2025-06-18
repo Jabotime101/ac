@@ -1,201 +1,145 @@
-import { promises as fs } from 'fs'
-import path from 'path'
-import formidable from 'formidable'
-import ffmpeg from 'fluent-ffmpeg'
-import OpenAI from 'openai'
+import { promises as fs } from 'fs';
+import path from 'path';
+import formidable from 'formidable';
+import OpenAI from 'openai';
+import ffmpeg from 'fluent-ffmpeg';
 
-// Configure FFmpeg path
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path
-ffmpeg.setFfmpegPath(ffmpegPath)
+// --- Configuration ---
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
-function getOpenAIClient(provider) {
-  if (provider === 'lemonfox') {
-    return new OpenAI({
-      apiKey: process.env.LEMONFOX_API_KEY,
-      baseURL: 'https://api.lemonfox.ai/v1',
-    })
-  }
-  return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  })
-}
-
-// Disable Next.js body parser for this route
 export const config = {
   api: {
-    bodyParser: false,
+    bodyParser: false, // Required for formidable to parse form data
   },
-}
+};
 
-const MAX_FILE_SIZE = 25 * 1024 * 1024 // 25MB
-const CHUNK_SIZE = 24 * 1024 * 1024 // 24MB chunks
+// --- Helper Functions ---
 
-function sendSSEMessage(res, data) {
-  res.write(`data: ${JSON.stringify(data)}\n\n`)
-}
+/**
+ * Gets the duration of an audio file in seconds using ffprobe.
+ * @param {string} filePath - Path to the audio file.
+ * @returns {Promise<number>} - The duration of the audio in seconds.
+ */
+const getAudioDuration = (filePath) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) {
+        return reject(new Error(`ffprobe error: ${err.message}`));
+      }
+      if (!metadata || !metadata.format || !metadata.format.duration) {
+          return reject(new Error('Could not get audio duration from metadata.'));
+      }
+      resolve(metadata.format.duration);
+    });
+  });
+};
+
+/**
+ * Transcribes a single audio file using OpenAI's Whisper API.
+ * @param {string} filePath - Path to the audio file.
+ * @returns {Promise<string>} - The transcription text.
+ */
+const transcribeSingleFile = async (filePath) => {
+    // formidable uses 'fs' under the hood, but for OpenAI v4+,
+    // we need to provide a stream manually.
+    const readStream = fs.createReadStream(filePath);
+    try {
+        const response = await openai.audio.transcriptions.create({
+            model: 'whisper-1',
+            file: readStream, // Pass the stream directly
+        });
+        return response.text;
+    } catch (error) {
+        console.error(`Error transcribing ${path.basename(filePath)}:`, error);
+        throw new Error(`Failed to transcribe chunk: ${error.message}`);
+    }
+};
+
+// --- The Main API Handler ---
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Set up Server-Sent Events
-  res.setHeader('Content-Type', 'text/event-stream')
-  res.setHeader('Cache-Control', 'no-cache')
-  res.setHeader('Connection', 'keep-alive')
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Headers', 'Cache-Control')
+  const form = formidable({});
+  let tempFilePath;
 
   try {
-    // Parse the uploaded file and fields
-    const form = formidable({
-      maxFileSize: 100 * 1024 * 1024,
-      uploadDir: '/tmp',
-      keepExtensions: true,
-    })
-    const [fields, files] = await new Promise((resolve, reject) => {
-      form.parse(req, (err, fields, files) => {
-        if (err) reject(err)
-        else resolve([fields, files])
-      })
-    })
-    const uploadedFile = files.file?.[0]
-    if (!uploadedFile) {
-      sendSSEMessage(res, { error: 'No file uploaded' })
-      res.end()
-      return
+    const [fields, files] = await form.parse(req);
+    const audioFile = files.audio?.[0];
+
+    if (!audioFile) {
+      return res.status(400).json({ error: 'No audio file uploaded.' });
     }
-    const provider = fields.provider?.[0] || 'lemonfox'
-    const model = fields.model?.[0] || (provider === 'lemonfox' ? 'whisper-large-v3' : 'gpt-4o-transcribe')
-    const openai = getOpenAIClient(provider)
+    tempFilePath = audioFile.filepath;
 
-    sendSSEMessage(res, { progress: 10, message: 'File uploaded successfully' })
+    const duration = await getAudioDuration(tempFilePath);
+    const MAX_DURATION = 1500; // 25 minutes
+    const CHUNK_DURATION = 1440; // 24 minutes, giving a buffer
 
-    // Check file size
-    const fileSize = fs.statSync(uploadedFile.filepath).size
-    if (fileSize > MAX_FILE_SIZE * 4) {
-      sendSSEMessage(res, { error: 'File too large (max 100MB)' })
-      res.end()
-      return
-    }
+    let fullTranscription = '';
 
-    sendSSEMessage(res, { progress: 20, message: 'Processing audio file...' })
-
-    // Compress audio if needed - use AAC instead of MP3
-    let processedFilePath = uploadedFile.filepath
-    if (fileSize > MAX_FILE_SIZE) {
-      const compressedPath = path.join('/tmp', `compressed_${Date.now()}.m4a`)
-      await new Promise((resolve, reject) => {
-        ffmpeg(uploadedFile.filepath)
-          .audioCodec('aac')
-          .audioBitrate(64)
-          .audioChannels(1)
-          .audioFrequency(16000)
-          .on('end', () => {
-            processedFilePath = compressedPath
-            resolve()
-          })
-          .on('error', reject)
-          .save(compressedPath)
-      })
-      sendSSEMessage(res, { progress: 40, message: 'Audio compressed' })
-    }
-
-    // Check if file still needs chunking
-    const processedFileSize = fs.statSync(processedFilePath).size
-    let transcript = ''
-    if (processedFileSize > MAX_FILE_SIZE) {
-      // Split into 9-minute chunks
-      sendSSEMessage(res, { progress: 50, message: 'Splitting into 9-minute chunks...' })
-      const chunks = await splitAudioIntoChunksByDuration(processedFilePath, 9 * 60)
-      sendSSEMessage(res, { progress: 60, message: `Processing ${chunks.length} chunks...` })
-      let prevText = ''
-      for (let i = 0; i < chunks.length; i++) {
-        const chunkPath = chunks[i]
-        sendSSEMessage(res, {
-          progress: 60 + (i / chunks.length) * 30,
-          message: `Processing chunk ${i + 1}/${chunks.length}`
-        })
-        const chunkTranscript = await transcribeAudio(chunkPath, prevText, model, openai)
-        transcript += chunkTranscript + ' '
-        prevText = chunkTranscript.slice(-1000) // last 1000 chars as context
-        fs.unlinkSync(chunkPath)
-      }
+    if (duration <= MAX_DURATION) {
+      // --- Case 1: Audio is short enough, transcribe directly ---
+      console.log(`Audio duration (${duration}s) is within limit. Transcribing directly...`);
+      fullTranscription = await transcribeSingleFile(tempFilePath);
     } else {
-      sendSSEMessage(res, { progress: 70, message: 'Transcribing audio...' })
-      transcript = await transcribeAudio(processedFilePath, '', model, openai)
-    }
+      // --- Case 2: Audio is too long, chunk it ---
+      console.log(`Audio duration (${duration}s) is too long. Starting chunking process...`);
+      const tempDir = path.join(path.dirname(tempFilePath), `chunks_${Date.now()}`);
+      await fs.mkdir(tempDir, { recursive: true });
+      
+      const numChunks = Math.ceil(duration / CHUNK_DURATION);
+      let transcribedChunks = [];
 
-    sendSSEMessage(res, { progress: 95, message: 'Finalizing transcript...' })
+      for (let i = 0; i < numChunks; i++) {
+        const chunkPath = path.join(tempDir, `chunk_${i}.mp3`);
+        const startTime = i * CHUNK_DURATION;
 
-    // Clean up files
-    if (processedFilePath !== uploadedFile.filepath) {
-      fs.unlinkSync(processedFilePath)
-    }
-    fs.unlinkSync(uploadedFile.filepath)
+        console.log(`Processing chunk ${i + 1}/${numChunks} starting at ${startTime}s...`);
 
-    // Send final result
-    sendSSEMessage(res, { 
-      progress: 100, 
-      transcript: transcript.trim(),
-      message: 'Transcription complete' 
-    })
-    sendSSEMessage(res, '[DONE]')
+        // Use ffmpeg to create a chunk
+        await new Promise((resolve, reject) => {
+          ffmpeg(tempFilePath)
+            .setStartTime(startTime)
+            .setDuration(CHUNK_DURATION)
+            .output(chunkPath)
+            .on('end', () => resolve())
+            .on('error', (err) => reject(new Error(`ffmpeg chunking error: ${err.message}`)))
+            .run();
+        });
 
-  } catch (error) {
-    console.error('Transcription error:', error)
-    sendSSEMessage(res, { error: error.message || 'Transcription failed' })
-  } finally {
-    res.end()
-  }
-}
-
-async function transcribeAudio(filePath, prompt, model, openai) {
-  try {
-    const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(filePath),
-      model,
-      response_format: 'text',
-      prompt: prompt || undefined,
-    })
-    return transcription
-  } catch (error) {
-    console.error('OpenAI API error:', error)
-    throw new Error('Failed to transcribe audio: ' + error.message)
-  }
-}
-
-async function splitAudioIntoChunksByDuration(filePath, chunkDurationSec) {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(filePath, (err, metadata) => {
-      if (err) return reject(err)
-      const duration = metadata.format.duration
-      const numChunks = Math.ceil(duration / chunkDurationSec)
-      const chunks = []
-      let currentChunk = 0
-      const processChunk = () => {
-        if (currentChunk >= numChunks) {
-          resolve(chunks)
-          return
-        }
-        const startTime = currentChunk * chunkDurationSec
-        const chunkPath = path.join('/tmp', `chunk_${currentChunk}_${Date.now()}.m4a`)
-        ffmpeg(filePath)
-          .setStartTime(startTime)
-          .duration(chunkDurationSec)
-          .audioCodec('aac')
-          .audioBitrate(64)
-          .audioChannels(1)
-          .audioFrequency(16000)
-          .on('end', () => {
-            chunks.push(chunkPath)
-            currentChunk++
-            processChunk()
-          })
-          .on('error', reject)
-          .save(chunkPath)
+        // Transcribe the individual chunk
+        const chunkTranscription = await transcribeSingleFile(chunkPath);
+        transcribedChunks.push(chunkTranscription);
+        
+        // Clean up the chunk file
+        await fs.unlink(chunkPath);
       }
-      processChunk()
-    })
-  })
+
+      // Clean up the chunks directory
+      await fs.rmdir(tempDir);
+      
+      // Combine the results
+      fullTranscription = transcribedChunks.join(' ');
+    }
+
+    res.status(200).json({ transcription: fullTranscription });
+  } catch (error) {
+    console.error('Main handler error:', error);
+    res.status(500).json({ error: 'Failed to transcribe audio.', details: error.message });
+  } finally {
+    // Clean up the original temporary file uploaded by formidable
+    if (tempFilePath) {
+      try {
+        await fs.unlink(tempFilePath);
+      } catch (cleanupError) {
+        console.error('Failed to cleanup temporary file:', cleanupError);
+      }
+    }
+  }
 } 

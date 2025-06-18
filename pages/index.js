@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import Head from 'next/head'
 
 const PROVIDERS = [
@@ -39,6 +39,21 @@ export default function Home() {
   const [selectedModel, setSelectedModel] = useState(PROVIDERS[0].model)
   const [duration, setDuration] = useState(0)
   const abortControllerRef = useRef(null)
+  const [logs, setLogs] = useState([])
+  const logsEndRef = useRef(null)
+
+  const scrollToBottom = () => {
+    logsEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [logs])
+
+  const addLog = (message, type = 'info') => {
+    const timestamp = new Date().toLocaleTimeString()
+    setLogs(prev => [...prev, { message, type, timestamp }])
+  }
 
   const formatFileSize = (bytes) => {
     if (bytes === 0) return '0 Bytes'
@@ -66,8 +81,10 @@ export default function Home() {
     if (droppedFile && droppedFile.type.startsWith('audio/')) {
       setFile(droppedFile)
       setError('')
+      addLog(`File dropped: ${droppedFile.name} (${formatFileSize(droppedFile.size)})`)
     } else {
       setError('Please drop an audio file')
+      addLog('Invalid file type dropped', 'error')
     }
   }, [])
 
@@ -76,9 +93,11 @@ export default function Home() {
     if (selectedFile && selectedFile.type.startsWith('audio/')) {
       setFile(selectedFile)
       setError('')
+      addLog(`File selected: ${selectedFile.name} (${formatFileSize(selectedFile.size)})`)
       getAudioDuration(selectedFile)
     } else {
       setError('Please select an audio file')
+      addLog('Invalid file type selected', 'error')
     }
   }, [])
 
@@ -88,6 +107,7 @@ export default function Home() {
     audio.src = url
     audio.addEventListener('loadedmetadata', () => {
       setDuration(audio.duration)
+      addLog(`Audio duration: ${Math.round(audio.duration)} seconds`)
       URL.revokeObjectURL(url)
     })
   }
@@ -99,14 +119,23 @@ export default function Home() {
     setProgress(0)
     setTranscript('')
     setError('')
+    setLogs([]) // Clear previous logs
 
     // Create new AbortController for this transcription
     abortControllerRef.current = new AbortController()
 
+    addLog('🚀 Starting transcription process...', 'success')
+    addLog(`Provider: ${selectedProvider}`)
+    addLog(`Model: ${selectedModel}`)
+    addLog(`File: ${file.name} (${formatFileSize(file.size)})`)
+
     const formData = new FormData()
-    formData.append('audio', file)
+    formData.append('audio', file) // Changed from 'file' to 'audio' to match new API
 
     try {
+      addLog('📤 Uploading file to server...')
+      setProgress(10)
+
       const response = await fetch('/api/transcribe', {
         method: 'POST',
         body: formData,
@@ -117,6 +146,10 @@ export default function Home() {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
 
+      addLog('📥 File uploaded successfully')
+      addLog('🔄 Processing audio file...')
+      setProgress(30)
+
       // New API returns JSON response instead of streaming
       const result = await response.json()
       
@@ -124,14 +157,17 @@ export default function Home() {
         throw new Error(result.error)
       }
 
-      setTranscript(result.transcription)
+      addLog('✅ Transcription completed successfully!', 'success')
       setProgress(100)
+      setTranscript(result.transcription)
       setIsTranscribing(false)
 
     } catch (err) {
       if (err.name === 'AbortError') {
+        addLog('⏹️ Transcription was cancelled by user', 'warning')
         setError('Transcription was cancelled')
       } else {
+        addLog(`❌ Error: ${err.message}`, 'error')
         setError(err.message)
       }
       setIsTranscribing(false)
@@ -142,6 +178,7 @@ export default function Home() {
 
   const handleStopTranscription = () => {
     if (abortControllerRef.current) {
+      addLog('⏹️ Stopping transcription...', 'warning')
       abortControllerRef.current.abort()
     }
   }
@@ -158,12 +195,14 @@ export default function Home() {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
+    addLog('📥 Transcript downloaded', 'success')
   }
 
   const handleProviderChange = (e) => {
     const provider = PROVIDERS.find(p => p.id === e.target.value)
     setSelectedProvider(provider.id)
     setSelectedModel(provider.model)
+    addLog(`Provider changed to: ${provider.name}`)
   }
 
   const estimateCost = () => {
@@ -176,8 +215,11 @@ export default function Home() {
   const handleReset = () => {
     // Stop any ongoing transcription
     if (abortControllerRef.current) {
+      addLog('⏹️ Stopping ongoing transcription...', 'warning')
       abortControllerRef.current.abort()
     }
+    
+    addLog('🔄 Resetting application...', 'info')
     
     // Clear all state
     setFile(null)
@@ -189,6 +231,7 @@ export default function Home() {
     setDuration(0)
     setSelectedProvider(PROVIDERS[0].id)
     setSelectedModel(PROVIDERS[0].model)
+    setLogs([])
     
     // Clear file input
     if (fileInputRef.current) {
@@ -353,6 +396,43 @@ export default function Home() {
                   >
                     Reset All
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Terminal/Log Box */}
+          {(isTranscribing || logs.length > 0) && (
+            <div className="mt-6">
+              <div className="bg-black text-green-400 p-4 rounded-lg font-mono text-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-green-400 font-semibold">Terminal Logs</span>
+                  <button
+                    onClick={() => setLogs([])}
+                    className="text-gray-400 hover:text-white text-xs"
+                  >
+                    Clear Logs
+                  </button>
+                </div>
+                <div className="h-48 overflow-y-auto bg-gray-900 p-3 rounded border border-gray-700">
+                  {logs.length === 0 ? (
+                    <div className="text-gray-500 italic">No logs yet...</div>
+                  ) : (
+                    logs.map((log, index) => (
+                      <div key={index} className="mb-1">
+                        <span className="text-gray-500 text-xs">[{log.timestamp}]</span>
+                        <span className={`ml-2 ${
+                          log.type === 'error' ? 'text-red-400' :
+                          log.type === 'success' ? 'text-green-400' :
+                          log.type === 'warning' ? 'text-yellow-400' :
+                          'text-green-400'
+                        }`}>
+                          {log.message}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                  <div ref={logsEndRef} />
                 </div>
               </div>
             </div>
