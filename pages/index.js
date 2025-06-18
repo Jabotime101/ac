@@ -38,6 +38,7 @@ export default function Home() {
   const [selectedProvider, setSelectedProvider] = useState(PROVIDERS[0].id)
   const [selectedModel, setSelectedModel] = useState(PROVIDERS[0].model)
   const [duration, setDuration] = useState(0)
+  const abortControllerRef = useRef(null)
 
   const formatFileSize = (bytes) => {
     if (bytes === 0) return '0 Bytes'
@@ -99,61 +100,49 @@ export default function Home() {
     setTranscript('')
     setError('')
 
+    // Create new AbortController for this transcription
+    abortControllerRef.current = new AbortController()
+
     const formData = new FormData()
-    formData.append('file', file)
-    formData.append('provider', selectedProvider)
-    formData.append('model', selectedModel)
+    formData.append('audio', file)
 
     try {
       const response = await fetch('/api/transcribe', {
         method: 'POST',
         body: formData,
+        signal: abortControllerRef.current.signal,
       })
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\n')
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6)
-            if (data === '[DONE]') {
-              setIsTranscribing(false)
-              setProgress(100)
-              return
-            }
-
-            try {
-              const parsed = JSON.parse(data)
-              if (parsed.progress !== undefined) {
-                setProgress(parsed.progress)
-              }
-              if (parsed.transcript) {
-                setTranscript(parsed.transcript)
-              }
-              if (parsed.error) {
-                setError(parsed.error)
-                setIsTranscribing(false)
-              }
-            } catch (e) {
-              // Ignore parsing errors for incomplete chunks
-            }
-          }
-        }
+      // New API returns JSON response instead of streaming
+      const result = await response.json()
+      
+      if (result.error) {
+        throw new Error(result.error)
       }
-    } catch (err) {
-      setError(err.message)
+
+      setTranscript(result.transcription)
+      setProgress(100)
       setIsTranscribing(false)
+
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        setError('Transcription was cancelled')
+      } else {
+        setError(err.message)
+      }
+      setIsTranscribing(false)
+    } finally {
+      abortControllerRef.current = null
+    }
+  }
+
+  const handleStopTranscription = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
     }
   }
 
@@ -185,6 +174,11 @@ export default function Home() {
   }
 
   const handleReset = () => {
+    // Stop any ongoing transcription
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    
     // Clear all state
     setFile(null)
     setIsDragging(false)
@@ -328,7 +322,7 @@ export default function Home() {
             )}
           </div>
 
-          {/* Progress Bar */}
+          {/* Progress Bar with Stop/Reset Controls */}
           {isTranscribing && (
             <div className="mt-6">
               <div className="bg-white p-4 rounded-lg shadow-sm">
@@ -338,11 +332,27 @@ export default function Home() {
                   </span>
                   <span className="text-sm text-gray-500">{progress}%</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
+                <div className="w-full bg-gray-200 rounded-full h-2 mb-4">
                   <div
                     className="bg-blue-500 h-2 rounded-full transition-all duration-300"
                     style={{ width: `${progress}%` }}
                   ></div>
+                </div>
+                
+                {/* Stop and Reset buttons during transcription */}
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleStopTranscription}
+                    className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded-lg font-medium transition-colors"
+                  >
+                    Stop Transcription
+                  </button>
+                  <button
+                    onClick={handleReset}
+                    className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-lg font-medium transition-colors"
+                  >
+                    Reset All
+                  </button>
                 </div>
               </div>
             </div>
