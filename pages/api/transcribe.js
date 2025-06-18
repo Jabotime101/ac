@@ -81,13 +81,13 @@ export default async function handler(req, res) {
 
     sendSSEMessage(res, { progress: 20, message: 'Processing audio file...' })
 
-    // Compress audio if needed
+    // Compress audio if needed - use AAC instead of MP3
     let processedFilePath = uploadedFile.filepath
     if (fileSize > MAX_FILE_SIZE) {
-      const compressedPath = path.join('/tmp', `compressed_${Date.now()}.mp3`)
+      const compressedPath = path.join('/tmp', `compressed_${Date.now()}.m4a`)
       await new Promise((resolve, reject) => {
         ffmpeg(uploadedFile.filepath)
-          .audioCodec('mp3')
+          .audioCodec('aac')
           .audioBitrate(64)
           .audioChannels(1)
           .audioFrequency(16000)
@@ -179,11 +179,11 @@ async function splitAudioIntoChunksByDuration(filePath, chunkDurationSec) {
           return
         }
         const startTime = currentChunk * chunkDurationSec
-        const chunkPath = path.join('/tmp', `chunk_${currentChunk}_${Date.now()}.mp3`)
+        const chunkPath = path.join('/tmp', `chunk_${currentChunk}_${Date.now()}.m4a`)
         ffmpeg(filePath)
           .setStartTime(startTime)
           .duration(chunkDurationSec)
-          .audioCodec('mp3')
+          .audioCodec('aac')
           .audioBitrate(64)
           .audioChannels(1)
           .audioFrequency(16000)
