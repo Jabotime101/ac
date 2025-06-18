@@ -1,4 +1,5 @@
-import { promises as fs } from 'fs';
+import fs from 'fs';
+import { promises as fsPromises } from 'fs';
 import path from 'path';
 import formidable from 'formidable';
 import OpenAI from 'openai';
@@ -42,8 +43,7 @@ const getAudioDuration = (filePath) => {
  * @returns {Promise<string>} - The transcription text.
  */
 const transcribeSingleFile = async (filePath) => {
-    // formidable uses 'fs' under the hood, but for OpenAI v4+,
-    // we need to provide a stream manually.
+    // Use the base fs module for createReadStream
     const readStream = fs.createReadStream(filePath);
     try {
         const response = await openai.audio.transcriptions.create({
@@ -91,7 +91,7 @@ export default async function handler(req, res) {
       // --- Case 2: Audio is too long, chunk it ---
       console.log(`Audio duration (${duration}s) is too long. Starting chunking process...`);
       const tempDir = path.join(path.dirname(tempFilePath), `chunks_${Date.now()}`);
-      await fs.mkdir(tempDir, { recursive: true });
+      await fsPromises.mkdir(tempDir, { recursive: true });
       
       const numChunks = Math.ceil(duration / CHUNK_DURATION);
       let transcribedChunks = [];
@@ -118,11 +118,11 @@ export default async function handler(req, res) {
         transcribedChunks.push(chunkTranscription);
         
         // Clean up the chunk file
-        await fs.unlink(chunkPath);
+        await fsPromises.unlink(chunkPath);
       }
 
       // Clean up the chunks directory
-      await fs.rmdir(tempDir);
+      await fsPromises.rmdir(tempDir);
       
       // Combine the results
       fullTranscription = transcribedChunks.join(' ');
@@ -136,7 +136,7 @@ export default async function handler(req, res) {
     // Clean up the original temporary file uploaded by formidable
     if (tempFilePath) {
       try {
-        await fs.unlink(tempFilePath);
+        await fsPromises.unlink(tempFilePath);
       } catch (cleanupError) {
         console.error('Failed to cleanup temporary file:', cleanupError);
       }
