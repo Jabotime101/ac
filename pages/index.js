@@ -184,6 +184,24 @@ export default function Home() {
     return `$${(provider.costPerHour * hours).toFixed(2)}`
   }
 
+  const handleReset = () => {
+    // Clear all state
+    setFile(null)
+    setIsDragging(false)
+    setIsTranscribing(false)
+    setProgress(0)
+    setTranscript('')
+    setError('')
+    setDuration(0)
+    setSelectedProvider(PROVIDERS[0].id)
+    setSelectedModel(PROVIDERS[0].model)
+    
+    // Clear file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <Head>
@@ -289,17 +307,26 @@ export default function Home() {
             </div>
           )}
 
-          {/* Transcribe Button */}
-          {file && !isTranscribing && (
-            <div className="mt-6">
+          {/* Action Buttons */}
+          <div className="mt-6 flex gap-4">
+            {/* Reset Button - Always visible */}
+            <button
+              onClick={handleReset}
+              className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-3 px-6 rounded-lg font-medium transition-colors"
+            >
+              Reset
+            </button>
+            
+            {/* Start/Transcribe Button - Only visible when file is selected and not transcribing */}
+            {file && !isTranscribing && (
               <button
                 onClick={handleTranscribe}
-                className="w-full bg-green-500 hover:bg-green-600 text-white py-3 px-6 rounded-lg font-medium transition-colors"
+                className="flex-1 bg-green-500 hover:bg-green-600 text-white py-3 px-6 rounded-lg font-medium transition-colors"
               >
-                Transcribe Audio
+                Start Transcription
               </button>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Progress Bar */}
           {isTranscribing && (
