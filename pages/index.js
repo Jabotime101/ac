@@ -50,6 +50,12 @@ export default function Home() {
     scrollToBottom()
   }, [logs])
 
+  // Add initial logs when component mounts
+  useEffect(() => {
+    addLog('🚀 Audio Transcription App loaded', 'success')
+    addLog('Ready to process audio files...', 'info')
+  }, [])
+
   const addLog = (message, type = 'info') => {
     const timestamp = new Date().toLocaleTimeString()
     setLogs(prev => [...prev, { message, type, timestamp }])
@@ -401,42 +407,40 @@ export default function Home() {
             </div>
           )}
 
-          {/* Terminal/Log Box */}
-          {(isTranscribing || logs.length > 0) && (
-            <div className="mt-6">
-              <div className="bg-black text-green-400 p-4 rounded-lg font-mono text-sm">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-green-400 font-semibold">Terminal Logs</span>
-                  <button
-                    onClick={() => setLogs([])}
-                    className="text-gray-400 hover:text-white text-xs"
-                  >
-                    Clear Logs
-                  </button>
-                </div>
-                <div className="h-48 overflow-y-auto bg-gray-900 p-3 rounded border border-gray-700">
-                  {logs.length === 0 ? (
-                    <div className="text-gray-500 italic">No logs yet...</div>
-                  ) : (
-                    logs.map((log, index) => (
-                      <div key={index} className="mb-1">
-                        <span className="text-gray-500 text-xs">[{log.timestamp}]</span>
-                        <span className={`ml-2 ${
-                          log.type === 'error' ? 'text-red-400' :
-                          log.type === 'success' ? 'text-green-400' :
-                          log.type === 'warning' ? 'text-yellow-400' :
-                          'text-green-400'
-                        }`}>
-                          {log.message}
-                        </span>
-                      </div>
-                    ))
-                  )}
-                  <div ref={logsEndRef} />
-                </div>
+          {/* Terminal/Log Box - Always Visible */}
+          <div className="mt-6">
+            <div className="bg-black text-green-400 p-4 rounded-lg font-mono text-sm">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-green-400 font-semibold">Terminal Logs</span>
+                <button
+                  onClick={() => setLogs([])}
+                  className="text-gray-400 hover:text-white text-xs"
+                >
+                  Clear Logs
+                </button>
+              </div>
+              <div className="h-48 overflow-y-auto bg-gray-900 p-3 rounded border border-gray-700">
+                {logs.length === 0 ? (
+                  <div className="text-gray-500 italic">No logs yet...</div>
+                ) : (
+                  logs.map((log, index) => (
+                    <div key={index} className="mb-1">
+                      <span className="text-gray-500 text-xs">[{log.timestamp}]</span>
+                      <span className={`ml-2 ${
+                        log.type === 'error' ? 'text-red-400' :
+                        log.type === 'success' ? 'text-green-400' :
+                        log.type === 'warning' ? 'text-yellow-400' :
+                        'text-green-400'
+                      }`}>
+                        {log.message}
+                      </span>
+                    </div>
+                  ))
+                )}
+                <div ref={logsEndRef} />
               </div>
             </div>
-          )}
+          </div>
 
           {/* Transcript Display */}
           {transcript && (
