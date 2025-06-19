@@ -2,9 +2,11 @@ const { createServer } = require('http');
 const { parse } = require('url');
 const next = require('next');
 const express = require('express');
-const session = require('express-session');
 const cookieParser = require('cookie-parser');
 const { google } = require('googleapis');
+
+// Import Redis session configuration
+const { session, sessionConfig, redisClient } = require('./session');
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
@@ -27,15 +29,7 @@ const expressApp = express();
 
 // Session configuration
 expressApp.use(cookieParser());
-expressApp.use(session({
-  secret: process.env.SESSION_SECRET || 'your-secret-key',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
-  }
-}));
+expressApp.use(session(sessionConfig));
 
 // Google OAuth routes
 expressApp.get('/auth/google', (req, res) => {
