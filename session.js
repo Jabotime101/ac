@@ -7,7 +7,7 @@ const RedisStore = connectRedis(session);
 const redisClient = createClient({ url: process.env.REDIS_URL });
 
 // Connect to Redis
-await redisClient.connect();
+redisClient.connect().catch(console.error);
 
 // Session configuration
 const sessionConfig = {
@@ -22,4 +22,6 @@ const sessionConfig = {
   }
 };
 
-module.exports = { session, sessionConfig, redisClient }; 
+module.exports = (app) => { 
+  app.use(session(sessionConfig)); 
+}; 

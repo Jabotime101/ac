@@ -6,7 +6,7 @@ const cookieParser = require('cookie-parser');
 const { google } = require('googleapis');
 
 // Import Redis session configuration
-const { session, sessionConfig, redisClient } = require('./session');
+const setupSession = require('./session');
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
@@ -29,7 +29,7 @@ const expressApp = express();
 
 // Session configuration
 expressApp.use(cookieParser());
-expressApp.use(session(sessionConfig));
+setupSession(expressApp);
 
 // Google OAuth routes
 expressApp.get('/auth/google', (req, res) => {
