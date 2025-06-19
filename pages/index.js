@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import Head from 'next/head'
+import GoogleDriveIntegration from '../components/GoogleDriveIntegration'
 
 const PROVIDERS = [
   {
@@ -41,6 +42,68 @@ export default function Home() {
   const abortControllerRef = useRef(null)
   const [logs, setLogs] = useState([])
   const logsEndRef = useRef(null)
+  const [selectedFolder, setSelectedFolder] = useState(null)
+  const [uploadedFiles, setUploadedFiles] = useState([])
+  const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(false)
+  const [googleAccessToken, setGoogleAccessToken] = useState(null)
+  const [savingToDrive, setSavingToDrive] = useState(false)
+  const [recentTranscriptions, setRecentTranscriptions] = useState([])
+  const [showRecentTranscriptions, setShowRecentTranscriptions] = useState(false)
+
+  // Load recent transcriptions from localStorage on component mount
+  useEffect(() => {
+    const saved = localStorage.getItem('recentTranscriptions')
+    if (saved) {
+      try {
+        setRecentTranscriptions(JSON.parse(saved))
+      } catch (error) {
+        console.error('Failed to load recent transcriptions:', error)
+      }
+    }
+  }, [])
+
+  // Save recent transcriptions to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('recentTranscriptions', JSON.stringify(recentTranscriptions))
+  }, [recentTranscriptions])
+
+  const addTranscriptionToHistory = (fileName, transcriptionText, provider, model) => {
+    const newTranscription = {
+      id: Date.now(),
+      fileName: fileName,
+      transcription: transcriptionText,
+      provider: provider,
+      model: model,
+      timestamp: new Date().toISOString(),
+      date: new Date().toLocaleDateString(),
+      time: new Date().toLocaleTimeString()
+    }
+    
+    setRecentTranscriptions(prev => [newTranscription, ...prev.slice(0, 9)]) // Keep only 10 most recent
+  }
+
+  const downloadTranscription = (transcription) => {
+    const blob = new Blob([transcription.transcription], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${transcription.fileName.replace(/\.[^/.]+$/, '')}_transcript.txt`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    addLog(`📥 Downloaded: ${transcription.fileName}`, 'success')
+  }
+
+  const deleteTranscription = (id) => {
+    setRecentTranscriptions(prev => prev.filter(t => t.id !== id))
+    addLog('🗑️ Transcription removed from history', 'info')
+  }
+
+  const clearAllTranscriptions = () => {
+    setRecentTranscriptions([])
+    addLog('🗑️ All transcriptions cleared from history', 'info')
+  }
 
   const scrollToBottom = () => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -55,6 +118,48 @@ export default function Home() {
     addLog('🚀 Audio Transcription App loaded', 'success')
     addLog('Ready to process audio files...', 'info')
   }, [])
+
+  // Initialize Google OAuth
+  useEffect(() => {
+    const initializeGoogleOAuth = () => {
+      if (window.google && window.google.accounts) {
+        window.google.accounts.id.initialize({
+          client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+          callback: handleGoogleCredentialResponse,
+          auto_select: false,
+          cancel_on_tap_outside: true,
+        });
+        
+        // Render the sign-in button
+        if (document.getElementById('google-signin-button')) {
+          window.google.accounts.id.renderButton(
+            document.getElementById('google-signin-button'),
+            { 
+              theme: 'outline', 
+              size: 'large',
+              type: 'standard',
+              text: 'signin_with',
+              shape: 'rectangular',
+              logo_alignment: 'left',
+            }
+          );
+        }
+      }
+    };
+
+    // Check if Google script is loaded
+    if (window.google && window.google.accounts) {
+      initializeGoogleOAuth();
+    } else {
+      // Wait for script to load
+      const checkGoogle = setInterval(() => {
+        if (window.google && window.google.accounts) {
+          clearInterval(checkGoogle);
+          initializeGoogleOAuth();
+        }
+      }, 100);
+    }
+  }, []);
 
   const addLog = (message, type = 'info') => {
     const timestamp = new Date().toLocaleTimeString()
@@ -166,6 +271,10 @@ export default function Home() {
       addLog('✅ Transcription completed successfully!', 'success')
       setProgress(100)
       setTranscript(result.transcription)
+      
+      // Add to recent transcriptions
+      addTranscriptionToHistory(file.name, result.transcription, selectedProvider, selectedModel)
+      
       setIsTranscribing(false)
 
     } catch (err) {
@@ -189,20 +298,51 @@ export default function Home() {
     }
   }
 
-  const handleDownload = () => {
-    if (!transcript) return
-
-    const blob = new Blob([transcript], { type: 'text/plain' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${file?.name?.replace(/\.[^/.]+$/, '') || 'transcript'}.txt`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-    addLog('📥 Transcript downloaded', 'success')
+  const handleFolderSelected = (folder) => {
+    setSelectedFolder(folder)
+    addLog(`📁 Google Drive folder selected: ${folder.name}`, 'success')
   }
+
+  const handleFileUploaded = (file) => {
+    setUploadedFiles(prev => [...prev, file])
+    addLog(`📤 File uploaded to Google Drive: ${file.name}`, 'success')
+  }
+
+  const handleSaveToGoogleDrive = async () => {
+    if (!googleAccessToken || !transcript) return;
+    setSavingToDrive(true);
+    try {
+      const fileName = `${file?.name?.replace(/\.[^/.]+$/, '') || 'transcript'}.txt`;
+      const fileData = `data:text/plain;base64,${btoa(unescape(encodeURIComponent(transcript)))}`;
+
+      const response = await fetch('/api/google-drive', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${googleAccessToken}`,
+        },
+        body: JSON.stringify({
+          action: 'upload',
+          fileData: fileData,
+          fileName: fileName,
+          folderId: selectedFolder?.id,
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        addLog('📤 Transcript saved to Google Drive!', 'success');
+        setUploadedFiles(prev => [...prev, result.file]);
+      } else {
+        const errorData = await response.json();
+        addLog(`❌ Failed to upload: ${errorData.error || response.statusText}`, 'error');
+      }
+    } catch (err) {
+      addLog(`❌ Failed to upload: ${err.message}`, 'error');
+    } finally {
+      setSavingToDrive(false);
+    }
+  };
 
   const handleProviderChange = (e) => {
     const provider = PROVIDERS.find(p => p.id === e.target.value)
@@ -245,19 +385,111 @@ export default function Home() {
     }
   }
 
+  // Google OAuth functions
+  const handleGoogleCredentialResponse = async (response) => {
+    try {
+      if (response.credential) {
+        // Exchange the ID token for an access token
+        const tokenResponse = await fetch('/api/google-drive', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            action: 'exchange_token',
+            id_token: response.credential,
+          }),
+        });
+
+        if (tokenResponse.ok) {
+          const tokenData = await tokenResponse.json();
+          setGoogleAccessToken(tokenData.access_token);
+          setIsGoogleSignedIn(true);
+          addLog('✅ Signed in with Google successfully', 'success');
+        } else {
+          addLog('❌ Failed to get Google access token', 'error');
+        }
+      }
+    } catch (error) {
+      console.error('Google OAuth error:', error);
+      addLog('❌ Google sign-in failed', 'error');
+    }
+  };
+
+  const handleGoogleSignIn = () => {
+    if (window.google) {
+      window.google.accounts.id.prompt();
+    }
+  };
+
+  const handleDownload = () => {
+    if (!transcript) return
+
+    const blob = new Blob([transcript], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${file?.name?.replace(/\.[^/.]+$/, '') || 'transcript'}.txt`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    addLog('📥 Transcript downloaded', 'success')
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <Head>
         <title>Audio Transcription App</title>
         <meta name="description" content="Upload audio files and get transcriptions using OpenAI Whisper" />
         <link rel="icon" href="/favicon.ico" />
+        <script src="https://accounts.google.com/gsi/client" async defer></script>
       </Head>
 
       <main className="container mx-auto px-4 py-8">
-        <div className="max-w-2xl mx-auto">
+        <div className="max-w-4xl mx-auto">
           <h1 className="text-4xl font-bold text-center text-gray-800 mb-8">
             Audio Transcription
           </h1>
+
+          {/* Google Drive Integration (server-side OAuth) */}
+          <GoogleDriveIntegration 
+            onFileUploaded={handleFileUploaded}
+            onFolderSelected={handleFolderSelected}
+          />
+
+          {/* Google Sign-in Button */}
+          <div className="mb-6 p-4 bg-white rounded-lg shadow-sm border border-gray-200">
+            <h3 className="text-lg font-medium text-gray-700 mb-3">Google Drive Access</h3>
+            {!isGoogleSignedIn ? (
+              <div>
+                <p className="text-sm text-gray-600 mb-3">Sign in with Google to save transcripts to Drive</p>
+                <div id="google-signin-button"></div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <svg className="w-5 h-5 mr-2 text-green-600" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                  </svg>
+                  <span className="text-green-600 font-medium">Signed in to Google</span>
+                </div>
+                <button
+                  onClick={() => {
+                    setIsGoogleSignedIn(false);
+                    setGoogleAccessToken(null);
+                    addLog('🔓 Signed out of Google', 'info');
+                  }}
+                  className="text-red-600 hover:text-red-800 text-sm font-medium"
+                >
+                  Sign Out
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Provider Selection */}
           <div className="provider-select-area mb-6 p-4 bg-white rounded-lg shadow-sm border border-blue-200">
@@ -450,12 +682,37 @@ export default function Home() {
                   <h2 className="text-xl font-semibold text-gray-800">
                     Transcript
                   </h2>
-                  <button
-                    onClick={handleDownload}
-                    className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm transition-colors"
-                  >
-                    Download
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleDownload}
+                      className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm transition-colors"
+                    >
+                      Download
+                    </button>
+                    {!isGoogleSignedIn ? (
+                      <button
+                        onClick={handleGoogleSignIn}
+                        className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm transition-colors flex items-center"
+                      >
+                        <svg className="w-4 h-4 mr-1" viewBox="0 0 48 48"><g><path fill="#4285F4" d="M44.5 20H24v8.5h11.7C34.7 33.4 30.1 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c2.6 0 5 .8 7 2.3l6.4-6.4C33.5 6.1 28.9 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.7-8 19.7-20 0-1.3-.1-2.7-.2-4z"/><path fill="#34A853" d="M6.3 14.7l7 5.1C15.1 17.1 19.2 14 24 14c2.6 0 5 .8 7 2.3l6.4-6.4C33.5 6.1 28.9 4 24 4c-7.1 0-13.1 3.7-16.7 9.7z"/><path fill="#FBBC05" d="M24 44c5.9 0 10.8-1.9 14.4-5.1l-6.6-5.4C29.7 35.7 27 36.5 24 36.5c-6.1 0-10.7-2.6-13.7-6.5l-7 5.4C7.1 40.3 14.9 44 24 44z"/><path fill="#EA4335" d="M44.5 20H24v8.5h11.7C34.7 33.4 30.1 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c2.6 0 5 .8 7 2.3l6.4-6.4C33.5 6.1 28.9 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.7-8 19.7-20 0-1.3-.1-2.7-.2-4z"/></g></svg>
+                        Sign in to Save
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleSaveToGoogleDrive}
+                        disabled={savingToDrive}
+                        className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm transition-colors flex items-center disabled:opacity-60"
+                      >
+                        <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                        </svg>
+                        {savingToDrive ? 'Saving...' : 'Save to Drive'}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <textarea
                   className="w-full bg-gray-50 p-4 rounded-lg text-gray-700 whitespace-pre-wrap resize-none border border-gray-200 focus:outline-none"
@@ -464,6 +721,119 @@ export default function Home() {
                   rows={20}
                   aria-label="Transcript"
                 />
+              </div>
+            </div>
+          )}
+
+          {/* Recent Transcriptions */}
+          {recentTranscriptions.length > 0 && (
+            <div className="mt-6">
+              <div className="bg-white p-6 rounded-lg shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-800">
+                    Recent Transcriptions ({recentTranscriptions.length})
+                  </h3>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowRecentTranscriptions(!showRecentTranscriptions)}
+                      className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                    >
+                      {showRecentTranscriptions ? 'Hide' : 'Show'} History
+                    </button>
+                    <button
+                      onClick={clearAllTranscriptions}
+                      className="text-red-600 hover:text-red-800 text-sm font-medium"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                </div>
+                
+                {showRecentTranscriptions && (
+                  <div className="space-y-3">
+                    {recentTranscriptions.map((transcription) => (
+                      <div key={transcription.id} className="border border-gray-200 rounded-lg p-4">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <h4 className="font-medium text-gray-800">
+                                {transcription.fileName}
+                              </h4>
+                              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                                {transcription.provider}
+                              </span>
+                              <span className="text-xs text-gray-500">
+                                {transcription.date} at {transcription.time}
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-600 mb-3 line-clamp-2">
+                              {transcription.transcription.substring(0, 150)}
+                              {transcription.transcription.length > 150 ? '...' : ''}
+                            </p>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => downloadTranscription(transcription)}
+                                className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-xs transition-colors"
+                              >
+                                Download
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTranscript(transcription.transcription)
+                                  setFile({ name: transcription.fileName })
+                                  addLog(`📄 Loaded transcription: ${transcription.fileName}`, 'success')
+                                }}
+                                className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-xs transition-colors"
+                              >
+                                Load
+                              </button>
+                              <button
+                                onClick={() => deleteTranscription(transcription.id)}
+                                className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-xs transition-colors"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Uploaded Files List */}
+          {uploadedFiles.length > 0 && (
+            <div className="mt-6">
+              <div className="bg-white p-6 rounded-lg shadow-sm">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">
+                  Files Uploaded to Google Drive
+                </h3>
+                <div className="space-y-2">
+                  {uploadedFiles.map((file, index) => (
+                    <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div className="flex items-center">
+                        <svg className="w-5 h-5 mr-2 text-green-600" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                        </svg>
+                        <span className="text-gray-700">{file.name}</span>
+                      </div>
+                      <a
+                        href={file.webViewLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-800 text-sm"
+                      >
+                        View in Drive
+                      </a>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}

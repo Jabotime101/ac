@@ -38,22 +38,107 @@ const getAudioDuration = (filePath) => {
 };
 
 /**
+ * Detects the MIME type of an audio file based on its extension.
+ * @param {string} filePath - Path to the audio file.
+ * @returns {string} - The MIME type.
+ */
+const getAudioMimeType = (filePath) => {
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeTypes = {
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.m4a': 'audio/mp4',
+    '.flac': 'audio/flac',
+    '.ogg': 'audio/ogg',
+    '.oga': 'audio/ogg',
+    '.webm': 'audio/webm',
+    '.mp4': 'audio/mp4',
+    '.mpeg': 'audio/mpeg',
+    '.mpga': 'audio/mpeg'
+  };
+  return mimeTypes[ext] || 'audio/mpeg'; // Default to MP3
+};
+
+/**
  * Transcribes a single audio file using OpenAI's Whisper API.
  * @param {string} filePath - Path to the audio file.
  * @returns {Promise<string>} - The transcription text.
  */
 const transcribeSingleFile = async (filePath) => {
-    // Use the base fs module for createReadStream
-    const readStream = fs.createReadStream(filePath);
     try {
+        // Create a file object with proper name and type for OpenAI
+        const fileBuffer = await fsPromises.readFile(filePath);
+        const fileName = path.basename(filePath);
+        const mimeType = getAudioMimeType(filePath);
+        
+        // Create a File-like object that OpenAI can handle
+        const file = new File([fileBuffer], fileName, {
+            type: mimeType
+        });
+
         const response = await openai.audio.transcriptions.create({
             model: 'whisper-1',
-            file: readStream, // Pass the stream directly
+            file: file,
         });
         return response.text;
     } catch (error) {
         console.error(`Error transcribing ${path.basename(filePath)}:`, error);
+        
+        // If the error is about file format, try to convert the file
+        if (error.message && error.message.includes('Unrecognized file format')) {
+            console.log('Attempting to convert file format...');
+            return await transcribeWithConversion(filePath);
+        }
+        
         throw new Error(`Failed to transcribe chunk: ${error.message}`);
+    }
+};
+
+/**
+ * Converts and transcribes a file that has format issues.
+ * @param {string} filePath - Path to the audio file.
+ * @returns {Promise<string>} - The transcription text.
+ */
+const transcribeWithConversion = async (filePath) => {
+    const convertedPath = filePath.replace(/\.[^/.]+$/, '_converted.mp3');
+    
+    try {
+        // Convert to MP3 format that OpenAI can handle
+        await new Promise((resolve, reject) => {
+            ffmpeg(filePath)
+                .toFormat('mp3')
+                .audioCodec('libmp3lame')
+                .audioBitrate(128)
+                .output(convertedPath)
+                .on('end', () => resolve())
+                .on('error', (err) => reject(new Error(`ffmpeg conversion error: ${err.message}`)))
+                .run();
+        });
+
+        // Now transcribe the converted file
+        const fileBuffer = await fsPromises.readFile(convertedPath);
+        const file = new File([fileBuffer], 'converted.mp3', {
+            type: 'audio/mpeg'
+        });
+
+        const response = await openai.audio.transcriptions.create({
+            model: 'whisper-1',
+            file: file,
+        });
+
+        // Clean up the converted file
+        await fsPromises.unlink(convertedPath);
+        
+        return response.text;
+    } catch (error) {
+        // Clean up the converted file if it exists
+        try {
+            await fsPromises.unlink(convertedPath);
+        } catch (cleanupError) {
+            console.error('Failed to cleanup converted file:', cleanupError);
+        }
+        
+        throw new Error(`Failed to transcribe after conversion: ${error.message}`);
     }
 };
 
@@ -76,6 +161,14 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'No audio file uploaded.' });
     }
     tempFilePath = audioFile.filepath;
+
+    // Validate file format before processing
+    const originalName = audioFile.originalFilename || 'audio';
+    const mimeType = getAudioMimeType(originalName);
+    
+    if (mimeType === 'audio/mpeg' && !originalName.toLowerCase().endsWith('.mp3')) {
+      console.log('File format may not be supported, will attempt conversion if needed');
+    }
 
     const duration = await getAudioDuration(tempFilePath);
     const MAX_DURATION = 1500; // 25 minutes
@@ -102,11 +195,14 @@ export default async function handler(req, res) {
 
         console.log(`Processing chunk ${i + 1}/${numChunks} starting at ${startTime}s...`);
 
-        // Use ffmpeg to create a chunk
+        // Use ffmpeg to create a chunk with proper MP3 encoding
         await new Promise((resolve, reject) => {
           ffmpeg(tempFilePath)
             .setStartTime(startTime)
             .setDuration(CHUNK_DURATION)
+            .toFormat('mp3')
+            .audioCodec('libmp3lame')
+            .audioBitrate(128)
             .output(chunkPath)
             .on('end', () => resolve())
             .on('error', (err) => reject(new Error(`ffmpeg chunking error: ${err.message}`)))
