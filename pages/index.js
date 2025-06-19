@@ -452,6 +452,19 @@ export default function Home() {
             Audio Transcription
           </h1>
 
+          {/* Navigation */}
+          <div className="flex justify-center mb-6">
+            <a
+              href="/history"
+              className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              View History
+            </a>
+          </div>
+
           {/* Google Drive Integration (server-side OAuth) */}
           <GoogleDriveIntegration 
             onFileUploaded={handleFileUploaded}

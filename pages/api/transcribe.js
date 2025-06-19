@@ -5,6 +5,7 @@ import formidable from 'formidable';
 import OpenAI from 'openai';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import { supabase } from '../../lib/supabase';
 
 // Configure ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
@@ -143,6 +144,40 @@ const cleanupFiles = async (filePaths = [], dirPath = null) => {
   }
 };
 
+// --- Database Functions ---
+
+/**
+ * Saves transcription to the database
+ * @param {string} filename - Original filename
+ * @param {string} transcript - Transcription text
+ * @param {string} userId - User ID (optional, for future user system)
+ * @returns {Promise<Object>} - Database result
+ */
+const saveTranscription = async (filename, transcript, userId = null) => {
+  try {
+    const { data, error } = await supabase
+      .from('transcriptions')
+      .insert([
+        {
+          user_id: userId,
+          filename: filename,
+          transcript: transcript
+        }
+      ])
+      .select();
+
+    if (error) {
+      console.error('Database error:', error);
+      throw new Error(`Failed to save transcription: ${error.message}`);
+    }
+
+    return data[0];
+  } catch (error) {
+    console.error('Error saving transcription:', error);
+    throw error;
+  }
+};
+
 // --- Main API Handler ---
 
 export default async function handler(req, res) {
@@ -193,6 +228,15 @@ export default async function handler(req, res) {
       
       try {
         const transcription = await transcribeFile(tempFilePath);
+        
+        // Save transcription to database
+        try {
+          const savedTranscription = await saveTranscription(originalName, transcription);
+          console.log('Transcription saved to database:', savedTranscription.id);
+        } catch (dbError) {
+          console.error('Failed to save transcription to database:', dbError);
+          // Continue with response even if database save fails
+        }
         
         return res.status(200).json({
           success: true,
@@ -247,6 +291,15 @@ export default async function handler(req, res) {
         const fullTranscription = transcriptions
           .map(chunk => chunk.transcription)
           .join(' ');
+
+        // Save transcription to database
+        try {
+          const savedTranscription = await saveTranscription(originalName, fullTranscription);
+          console.log('Transcription saved to database:', savedTranscription.id);
+        } catch (dbError) {
+          console.error('Failed to save transcription to database:', dbError);
+          // Continue with response even if database save fails
+        }
 
         return res.status(200).json({
           success: true,
