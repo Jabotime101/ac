@@ -1,9 +1,8 @@
-const session = require("express-session");
-const connectRedis = require("connect-redis").default;
+const session      = require("express-session");
+const { default: RedisStore } = require("connect-redis");  // v7 default export is the class
 const { createClient } = require("redis");
 
 // Create Redis client and store
-const RedisStore = connectRedis(session);
 const redisClient = createClient({ 
   url: process.env.REDIS_URL || 'redis://localhost:6379' 
 });
