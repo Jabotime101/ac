@@ -1,5 +1,5 @@
 const session = require("express-session");
-const connectRedis = require("connect-redis");
+const connectRedis = require("connect-redis").default;
 const { createClient } = require("redis");
 
 // Create Redis client and store
