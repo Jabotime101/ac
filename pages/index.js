@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import Head from 'next/head'
-import GoogleDriveIntegration from '../components/GoogleDriveIntegration'
+import { useSession, signIn, signOut } from 'next-auth/react'
 
 const PROVIDERS = [
   {
@@ -118,48 +118,6 @@ export default function Home() {
     addLog('🚀 Audio Transcription App loaded', 'success')
     addLog('Ready to process audio files...', 'info')
   }, [])
-
-  // Initialize Google OAuth
-  useEffect(() => {
-    const initializeGoogleOAuth = () => {
-      if (window.google && window.google.accounts) {
-        window.google.accounts.id.initialize({
-          client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
-          callback: handleGoogleCredentialResponse,
-          auto_select: false,
-          cancel_on_tap_outside: true,
-        });
-        
-        // Render the sign-in button
-        if (document.getElementById('google-signin-button')) {
-          window.google.accounts.id.renderButton(
-            document.getElementById('google-signin-button'),
-            { 
-              theme: 'outline', 
-              size: 'large',
-              type: 'standard',
-              text: 'signin_with',
-              shape: 'rectangular',
-              logo_alignment: 'left',
-            }
-          );
-        }
-      }
-    };
-
-    // Check if Google script is loaded
-    if (window.google && window.google.accounts) {
-      initializeGoogleOAuth();
-    } else {
-      // Wait for script to load
-      const checkGoogle = setInterval(() => {
-        if (window.google && window.google.accounts) {
-          clearInterval(checkGoogle);
-          initializeGoogleOAuth();
-        }
-      }, 100);
-    }
-  }, []);
 
   const addLog = (message, type = 'info') => {
     const timestamp = new Date().toLocaleTimeString()
@@ -385,43 +343,6 @@ export default function Home() {
     }
   }
 
-  // Google OAuth functions
-  const handleGoogleCredentialResponse = async (response) => {
-    try {
-      if (response.credential) {
-        // Exchange the ID token for an access token
-        const tokenResponse = await fetch('/api/google-drive', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            action: 'exchange_token',
-            id_token: response.credential,
-          }),
-        });
-
-        if (tokenResponse.ok) {
-          const tokenData = await tokenResponse.json();
-          setGoogleAccessToken(tokenData.access_token);
-          setIsGoogleSignedIn(true);
-          addLog('✅ Signed in with Google successfully', 'success');
-        } else {
-          addLog('❌ Failed to get Google access token', 'error');
-        }
-      }
-    } catch (error) {
-      console.error('Google OAuth error:', error);
-      addLog('❌ Google sign-in failed', 'error');
-    }
-  };
-
-  const handleGoogleSignIn = () => {
-    if (window.google) {
-      window.google.accounts.id.prompt();
-    }
-  };
-
   const handleDownload = () => {
     if (!transcript) return
 
@@ -438,74 +359,31 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+    <div className="bg-gray-50 min-h-screen">
       <Head>
-        <title>Audio Transcription App</title>
-        <meta name="description" content="Upload audio files and get transcriptions using OpenAI Whisper" />
+        <title>AC - Audio Transcription</title>
+        <meta name="description" content="Transcribe audio files with speed and accuracy." />
         <link rel="icon" href="/favicon.ico" />
-        <script src="https://accounts.google.com/gsi/client" async defer></script>
       </Head>
 
-      <main className="container mx-auto px-4 py-8">
-        <div className="max-w-4xl mx-auto">
-          <h1 className="text-4xl font-bold text-center text-gray-800 mb-8">
-            Audio Transcription
+      <main className="container mx-auto p-4 sm:p-6 lg:p-8">
+        <header className="text-center mb-8">
+          <h1 className="text-4xl sm:text-5xl font-extrabold text-gray-900 tracking-tight">
+            AC - Audio Transcription
           </h1>
+          <p className="mt-3 max-w-2xl mx-auto text-lg text-gray-500">
+            Upload your audio file, select a provider, and get a transcript in minutes.
+          </p>
+        </header>
 
-          {/* Navigation */}
-          <div className="flex justify-center mb-6">
-            <a
-              href="/history"
-              className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              View History
-            </a>
-          </div>
+        <div className="max-w-4xl mx-auto">
 
-          {/* Google Drive Integration (server-side OAuth) */}
-          <GoogleDriveIntegration 
-            onFileUploaded={handleFileUploaded}
-            onFolderSelected={handleFolderSelected}
-          />
-
-          {/* Google Sign-in Button */}
-          <div className="mb-6 p-4 bg-white rounded-lg shadow-sm border border-gray-200">
-            <h3 className="text-lg font-medium text-gray-700 mb-3">Google Drive Access</h3>
-            {!isGoogleSignedIn ? (
-              <div>
-                <p className="text-sm text-gray-600 mb-3">Sign in with Google to save transcripts to Drive</p>
-                <div id="google-signin-button"></div>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <svg className="w-5 h-5 mr-2 text-green-600" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                  </svg>
-                  <span className="text-green-600 font-medium">Signed in to Google</span>
-                </div>
-                <button
-                  onClick={() => {
-                    setIsGoogleSignedIn(false);
-                    setGoogleAccessToken(null);
-                    addLog('🔓 Signed out of Google', 'info');
-                  }}
-                  className="text-red-600 hover:text-red-800 text-sm font-medium"
-                >
-                  Sign Out
-                </button>
-              </div>
-            )}
+          <div className="mb-6">
+            <AuthComponent />
           </div>
 
           {/* Provider Selection */}
-          <div className="provider-select-area mb-6 p-4 bg-white rounded-lg shadow-sm border border-blue-200">
+          <div className="mb-6 p-4 bg-white rounded-lg shadow-sm border border-gray-200">
             <label htmlFor="provider" className="block text-lg font-medium text-gray-700 mb-2">Choose Provider</label>
             <select
               id="provider"
@@ -854,4 +732,50 @@ export default function Home() {
       </main>
     </div>
   )
-} 
+}
+
+const AuthComponent = () => {
+  const { data: session, status } = useSession()
+
+  if (status === 'loading') {
+    return (
+      <div className="p-6 bg-white border border-gray-200 rounded-lg shadow-sm text-center">
+        <p>Loading...</p>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {/* If the user IS logged in, show their status */}
+      {session && (
+        <div className="p-6 bg-white border border-gray-200 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold text-gray-900">Google Drive Connected</h3>
+          <p className="mt-2 text-sm text-gray-600">Signed in as {session.user.email}</p>
+          {/* You can pass session.accessToken to your upload function */}
+          <button
+            onClick={() => signOut()}
+            className="mt-4 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+          >
+            Sign Out
+          </button>
+        </div>
+      )}
+
+      {/* If the user is NOT logged in, show a single sign-in button */}
+      {!session && (
+        <div className="p-6 bg-white border border-gray-200 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold text-gray-900">Connect and Save to Google Drive</h3>
+          <p className="mt-2 text-sm text-gray-600">Sign in with your Google account to automatically save transcripts and audio files to your Drive.</p>
+          <button
+            onClick={() => signIn('google')}
+            className="mt-4 inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          >
+            <svg className="w-5 h-5 mr-2" aria-hidden="true" focusable="false" data-prefix="fab" data-icon="google" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512"><path fill="currentColor" d="M488 261.8C488 403.3 381.5 512 244 512 109.8 512 0 402.2 0 261.8S109.8 11.8 244 11.8c67.7 0 128.8 28.1 172.4 72.6l-63.1 61.9c-36.6-35.4-86.2-58.6-146-58.6-105.7 0-192.3 86.6-192.3 192.3s86.6 192.3 192.3 192.3c127.3 0 166.4-96.1 171-143.9H244V261.8h244z"></path></svg>
+            Sign in with Google
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}

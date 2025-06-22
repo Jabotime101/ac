@@ -66,7 +66,10 @@ GOOGLE_CLIENT_ID=your-google-client-id-here
 GOOGLE_CLIENT_SECRET=your-google-client-secret-here
 
 # Redirect URI (use localhost for development)
-GOOGLE_REDIRECT_URI=http://localhost:10000/auth/google/callback
+GOOGLE_CALLBACK_URL=http://localhost:3000/auth/google/callback
+
+# NextAuth URL
+NEXTAUTH_URL=http://localhost:3000
 
 # Session Secret (generate a random string)
 SESSION_SECRET=your-random-session-secret-here
@@ -78,7 +81,7 @@ GOOGLE_API_KEY=your-google-api-key-here
 NODE_ENV=development
 
 # Port (optional)
-PORT=10000
+PORT=3000
 ```
 
 ### Generate Session Secret
@@ -110,7 +113,7 @@ npm start
 
 ## Step 5: Test the Integration
 
-1. Open your browser to `http://localhost:10000`
+1. Open your browser to `http://localhost:3000`
 2. Click "Connect to Google Drive"
 3. Sign in with your Google account
 4. Grant permissions to the app
@@ -145,7 +148,8 @@ Add these environment variables in Render dashboard:
 | `OPENAI_API_KEY` | Your OpenAI API key |
 | `GOOGLE_CLIENT_ID` | Your Google Client ID |
 | `GOOGLE_CLIENT_SECRET` | Your Google Client Secret |
-| `GOOGLE_REDIRECT_URI` | `https://your-app-name.onrender.com/auth/google/callback` |
+| `GOOGLE_CALLBACK_URL` | `https://your-app-name.onrender.com/auth/google/callback` |
+| `NEXTAUTH_URL` | `https://your-app-name.onrender.com` |
 | `SESSION_SECRET` | Your random session secret |
 | `NODE_ENV` | `production` |
 
@@ -157,6 +161,11 @@ Add these environment variables in Render dashboard:
    ```
    https://your-app-name.onrender.com
    https://your-app-name.onrender.com/auth/google/callback
+   ```
+And for local development:
+   ```
+   http://localhost:3000
+   http://localhost:3000/auth/google/callback
    ```
 
 ## Troubleshooting

@@ -11,4 +11,7 @@ CREATE TABLE transcriptions (
 CREATE INDEX idx_transcriptions_user_id ON transcriptions(user_id);
 
 -- Create an index on created_at for sorting
-CREATE INDEX idx_transcriptions_created_at ON transcriptions(created_at DESC); 
+CREATE INDEX idx_transcriptions_created_at ON transcriptions(created_at DESC);
+
+-- Create an index on the user_id column for faster lookups
+CREATE INDEX IF NOT EXISTS idx_transcriptions_user_id ON public.transcriptions (user_id); 

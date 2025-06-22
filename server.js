@@ -18,7 +18,10 @@ console.log(`Starting server on ${hostname}:${port}`);
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI || `http://localhost:${port}/auth/google/callback`
+  // This must be set in your environment variables.
+  // For local development, use: http://localhost:10000/auth/google/callback
+  // For production, use your server's callback URL.
+  process.env.GOOGLE_CALLBACK_URL
 );
 
 const app = next({ dev, hostname, port });
