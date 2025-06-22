@@ -53,7 +53,7 @@ npm install
    - `http://localhost:10000` (for development)
    - `https://your-app-name.onrender.com` (for production)
 5. Add authorized redirect URIs:
-   - `http://localhost:3000/auth/google/callback` (for development)
+   - `http://localhost:10000/auth/google/callback` (for development)
    - `https://your-app-name.onrender.com/auth/google/callback` (for production)
 6. Note down the **Client ID** and **Client Secret**
 
@@ -68,10 +68,10 @@ OPENAI_API_KEY=your_openai_api_key_here
 # Google OAuth Credentials
 GOOGLE_CLIENT_ID=your_google_client_id_here
 GOOGLE_CLIENT_SECRET=your_google_client_secret_here
-GOOGLE_CALLBACK_URL=http://localhost:3000/auth/google/callback
+GOOGLE_CALLBACK_URL=http://localhost:10000/auth/google/callback
 
 # NextAuth URL
-NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_URL=http://localhost:10000
 
 # Session Secret (generate a random string)
 SESSION_SECRET=your_random_session_secret_here
@@ -108,7 +108,7 @@ npm run build
 npm start
 ```
 
-The app will be available at `http://localhost:3000`
+The app will be available at `http://localhost:10000`
 
 ## Usage
 

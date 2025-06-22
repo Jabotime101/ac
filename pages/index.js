@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import Head from 'next/head'
-import { useSession, signIn, signOut } from 'next-auth/react'
 
 const PROVIDERS = [
   {
@@ -42,11 +41,6 @@ export default function Home() {
   const abortControllerRef = useRef(null)
   const [logs, setLogs] = useState([])
   const logsEndRef = useRef(null)
-  const [selectedFolder, setSelectedFolder] = useState(null)
-  const [uploadedFiles, setUploadedFiles] = useState([])
-  const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(false)
-  const [googleAccessToken, setGoogleAccessToken] = useState(null)
-  const [savingToDrive, setSavingToDrive] = useState(false)
   const [recentTranscriptions, setRecentTranscriptions] = useState([])
   const [showRecentTranscriptions, setShowRecentTranscriptions] = useState(false)
 
@@ -256,93 +250,6 @@ export default function Home() {
     }
   }
 
-  const handleFolderSelected = (folder) => {
-    setSelectedFolder(folder)
-    addLog(`📁 Google Drive folder selected: ${folder.name}`, 'success')
-  }
-
-  const handleFileUploaded = (file) => {
-    setUploadedFiles(prev => [...prev, file])
-    addLog(`📤 File uploaded to Google Drive: ${file.name}`, 'success')
-  }
-
-  const handleSaveToGoogleDrive = async () => {
-    if (!googleAccessToken || !transcript) return;
-    setSavingToDrive(true);
-    try {
-      const fileName = `${file?.name?.replace(/\.[^/.]+$/, '') || 'transcript'}.txt`;
-      const fileData = `data:text/plain;base64,${btoa(unescape(encodeURIComponent(transcript)))}`;
-
-      const response = await fetch('/api/google-drive', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${googleAccessToken}`,
-        },
-        body: JSON.stringify({
-          action: 'upload',
-          fileData: fileData,
-          fileName: fileName,
-          folderId: selectedFolder?.id,
-        }),
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        addLog('📤 Transcript saved to Google Drive!', 'success');
-        setUploadedFiles(prev => [...prev, result.file]);
-      } else {
-        const errorData = await response.json();
-        addLog(`❌ Failed to upload: ${errorData.error || response.statusText}`, 'error');
-      }
-    } catch (err) {
-      addLog(`❌ Failed to upload: ${err.message}`, 'error');
-    } finally {
-      setSavingToDrive(false);
-    }
-  };
-
-  const handleProviderChange = (e) => {
-    const provider = PROVIDERS.find(p => p.id === e.target.value)
-    setSelectedProvider(provider.id)
-    setSelectedModel(provider.model)
-    addLog(`Provider changed to: ${provider.name}`)
-  }
-
-  const estimateCost = () => {
-    const provider = PROVIDERS.find(p => p.id === selectedProvider)
-    if (!provider || !duration) return '$0.00'
-    const hours = duration / 3600
-    return `$${(provider.costPerHour * hours).toFixed(2)}`
-  }
-
-  const handleReset = () => {
-    // Stop any ongoing transcription
-    if (abortControllerRef.current) {
-      addLog('⏹️ Stopping ongoing transcription...', 'warning')
-      abortControllerRef.current.abort()
-    }
-    
-    addLog('🔄 Resetting application...', 'info')
-    
-    // Clear all state
-    setFile(null)
-    setIsDragging(false)
-    setIsTranscribing(false)
-    setProgress(0)
-    setTranscript('')
-    setError('')
-    setDuration(0)
-    setSelectedProvider(PROVIDERS[0].id)
-    setSelectedModel(PROVIDERS[0].model)
-    setLogs([])
-    
-    // Clear file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-    }
-  }
-
   const handleDownload = () => {
     if (!transcript) return
 
@@ -377,18 +284,17 @@ export default function Home() {
         </header>
 
         <div className="max-w-4xl mx-auto">
-
-          <div className="mb-6">
-            <AuthComponent />
-          </div>
-
           {/* Provider Selection */}
           <div className="mb-6 p-4 bg-white rounded-lg shadow-sm border border-gray-200">
             <label htmlFor="provider" className="block text-lg font-medium text-gray-700 mb-2">Choose Provider</label>
             <select
               id="provider"
               value={selectedProvider}
-              onChange={handleProviderChange}
+              onChange={(e) => {
+                setSelectedProvider(e.target.value)
+                setSelectedModel(PROVIDERS.find(p => p.id === e.target.value).model)
+                addLog(`Provider changed to: ${e.target.value}`)
+              }}
               className="w-full p-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 mb-2"
             >
               {PROVIDERS.map((provider) => (
@@ -477,7 +383,32 @@ export default function Home() {
           <div className="mt-6 flex gap-4">
             {/* Reset Button - Always visible */}
             <button
-              onClick={handleReset}
+              onClick={() => {
+                // Stop any ongoing transcription
+                if (abortControllerRef.current) {
+                  addLog('⏹️ Stopping ongoing transcription...', 'warning')
+                  abortControllerRef.current.abort()
+                }
+                
+                addLog('🔄 Resetting application...', 'info')
+                
+                // Clear all state
+                setFile(null)
+                setIsDragging(false)
+                setIsTranscribing(false)
+                setProgress(0)
+                setTranscript('')
+                setError('')
+                setDuration(0)
+                setSelectedProvider(PROVIDERS[0].id)
+                setSelectedModel(PROVIDERS[0].model)
+                setLogs([])
+                
+                // Clear file input
+                if (fileInputRef.current) {
+                  fileInputRef.current.value = ''
+                }
+              }}
               className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-3 px-6 rounded-lg font-medium transition-colors"
             >
               Reset
@@ -520,7 +451,32 @@ export default function Home() {
                     Stop Transcription
                   </button>
                   <button
-                    onClick={handleReset}
+                    onClick={() => {
+                      // Stop any ongoing transcription
+                      if (abortControllerRef.current) {
+                        addLog('⏹️ Stopping ongoing transcription...', 'warning')
+                        abortControllerRef.current.abort()
+                      }
+                      
+                      addLog('🔄 Resetting application...', 'info')
+                      
+                      // Clear all state
+                      setFile(null)
+                      setIsDragging(false)
+                      setIsTranscribing(false)
+                      setProgress(0)
+                      setTranscript('')
+                      setError('')
+                      setDuration(0)
+                      setSelectedProvider(PROVIDERS[0].id)
+                      setSelectedModel(PROVIDERS[0].model)
+                      setLogs([])
+                      
+                      // Clear file input
+                      if (fileInputRef.current) {
+                        fileInputRef.current.value = ''
+                      }
+                    }}
                     className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-lg font-medium transition-colors"
                   >
                     Reset All
@@ -573,36 +529,16 @@ export default function Home() {
                   <h2 className="text-xl font-semibold text-gray-800">
                     Transcript
                   </h2>
-                  <div className="flex gap-2">
+                  <div className="flex space-x-2">
                     <button
                       onClick={handleDownload}
-                      className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm transition-colors"
+                      className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm transition-colors flex items-center"
                     >
+                      <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                      </svg>
                       Download
                     </button>
-                    {!isGoogleSignedIn ? (
-                      <button
-                        onClick={handleGoogleSignIn}
-                        className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm transition-colors flex items-center"
-                      >
-                        <svg className="w-4 h-4 mr-1" viewBox="0 0 48 48"><g><path fill="#4285F4" d="M44.5 20H24v8.5h11.7C34.7 33.4 30.1 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c2.6 0 5 .8 7 2.3l6.4-6.4C33.5 6.1 28.9 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.7-8 19.7-20 0-1.3-.1-2.7-.2-4z"/><path fill="#34A853" d="M6.3 14.7l7 5.1C15.1 17.1 19.2 14 24 14c2.6 0 5 .8 7 2.3l6.4-6.4C33.5 6.1 28.9 4 24 4c-7.1 0-13.1 3.7-16.7 9.7z"/><path fill="#FBBC05" d="M24 44c5.9 0 10.8-1.9 14.4-5.1l-6.6-5.4C29.7 35.7 27 36.5 24 36.5c-6.1 0-10.7-2.6-13.7-6.5l-7 5.4C7.1 40.3 14.9 44 24 44z"/><path fill="#EA4335" d="M44.5 20H24v8.5h11.7C34.7 33.4 30.1 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c2.6 0 5 .8 7 2.3l6.4-6.4C33.5 6.1 28.9 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.7-8 19.7-20 0-1.3-.1-2.7-.2-4z"/></g></svg>
-                        Sign in to Save
-                      </button>
-                    ) : (
-                      <button
-                        onClick={handleSaveToGoogleDrive}
-                        disabled={savingToDrive}
-                        className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm transition-colors flex items-center disabled:opacity-60"
-                      >
-                        <svg className="w-4 h-4 mr-1" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                        </svg>
-                        {savingToDrive ? 'Saving...' : 'Save to Drive'}
-                      </button>
-                    )}
                   </div>
                 </div>
                 <textarea
@@ -694,88 +630,8 @@ export default function Home() {
               </div>
             </div>
           )}
-
-          {/* Uploaded Files List */}
-          {uploadedFiles.length > 0 && (
-            <div className="mt-6">
-              <div className="bg-white p-6 rounded-lg shadow-sm">
-                <h3 className="text-lg font-semibold text-gray-800 mb-4">
-                  Files Uploaded to Google Drive
-                </h3>
-                <div className="space-y-2">
-                  {uploadedFiles.map((file, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                      <div className="flex items-center">
-                        <svg className="w-5 h-5 mr-2 text-green-600" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                        </svg>
-                        <span className="text-gray-700">{file.name}</span>
-                      </div>
-                      <a
-                        href={file.webViewLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:text-blue-800 text-sm"
-                      >
-                        View in Drive
-                      </a>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       </main>
-    </div>
-  )
-}
-
-const AuthComponent = () => {
-  const { data: session, status } = useSession()
-
-  if (status === 'loading') {
-    return (
-      <div className="p-6 bg-white border border-gray-200 rounded-lg shadow-sm text-center">
-        <p>Loading...</p>
-      </div>
-    )
-  }
-
-  return (
-    <div>
-      {/* If the user IS logged in, show their status */}
-      {session && (
-        <div className="p-6 bg-white border border-gray-200 rounded-lg shadow-sm">
-          <h3 className="text-lg font-semibold text-gray-900">Google Drive Connected</h3>
-          <p className="mt-2 text-sm text-gray-600">Signed in as {session.user.email}</p>
-          {/* You can pass session.accessToken to your upload function */}
-          <button
-            onClick={() => signOut()}
-            className="mt-4 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-          >
-            Sign Out
-          </button>
-        </div>
-      )}
-
-      {/* If the user is NOT logged in, show a single sign-in button */}
-      {!session && (
-        <div className="p-6 bg-white border border-gray-200 rounded-lg shadow-sm">
-          <h3 className="text-lg font-semibold text-gray-900">Connect and Save to Google Drive</h3>
-          <p className="mt-2 text-sm text-gray-600">Sign in with your Google account to automatically save transcripts and audio files to your Drive.</p>
-          <button
-            onClick={() => signIn('google')}
-            className="mt-4 inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            <svg className="w-5 h-5 mr-2" aria-hidden="true" focusable="false" data-prefix="fab" data-icon="google" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512"><path fill="currentColor" d="M488 261.8C488 403.3 381.5 512 244 512 109.8 512 0 402.2 0 261.8S109.8 11.8 244 11.8c67.7 0 128.8 28.1 172.4 72.6l-63.1 61.9c-36.6-35.4-86.2-58.6-146-58.6-105.7 0-192.3 86.6-192.3 192.3s86.6 192.3 192.3 192.3c127.3 0 166.4-96.1 171-143.9H244V261.8h244z"></path></svg>
-            Sign in with Google
-          </button>
-        </div>
-      )}
     </div>
   )
 }

@@ -62,14 +62,14 @@ Create a `.env.local` file in your project root with the following variables:
 OPENAI_API_KEY=sk-your-openai-api-key-here
 
 # Google OAuth Credentials (from Step 1.3)
-GOOGLE_CLIENT_ID=your-google-client-id-here
-GOOGLE_CLIENT_SECRET=your-google-client-secret-here
+GOOGLE_CLIENT_ID=your_client_id
+GOOGLE_CLIENT_SECRET=your_client_secret
 
 # Redirect URI (use localhost for development)
-GOOGLE_CALLBACK_URL=http://localhost:3000/auth/google/callback
+GOOGLE_CALLBACK_URL=http://localhost:10000/auth/google/callback
 
 # NextAuth URL
-NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_URL=http://localhost:10000
 
 # Session Secret (generate a random string)
 SESSION_SECRET=your-random-session-secret-here
@@ -81,7 +81,10 @@ GOOGLE_API_KEY=your-google-api-key-here
 NODE_ENV=development
 
 # Port (optional)
-PORT=3000
+PORT=10000
+
+# Development environment variables
+NEXTAUTH_SECRET=your_random_secret_key
 ```
 
 ### Generate Session Secret
@@ -113,7 +116,7 @@ npm start
 
 ## Step 5: Test the Integration
 
-1. Open your browser to `http://localhost:3000`
+1. Open your browser to `http://localhost:10000`
 2. Click "Connect to Google Drive"
 3. Sign in with your Google account
 4. Grant permissions to the app
@@ -164,8 +167,8 @@ Add these environment variables in Render dashboard:
    ```
 And for local development:
    ```
-   http://localhost:3000
-   http://localhost:3000/auth/google/callback
+   http://localhost:10000
+   http://localhost:10000/auth/google/callback
    ```
 
 ## Troubleshooting
