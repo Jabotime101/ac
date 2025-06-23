@@ -5,7 +5,6 @@ import formidable from 'formidable';
 import OpenAI from 'openai';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
-import { supabase } from '../../lib/supabase';
 
 // Configure ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
@@ -144,10 +143,6 @@ const cleanupFiles = async (filePaths = [], dirPath = null) => {
   }
 };
 
-// --- Database Functions ---
-
-// Database insert is now done directly in the transcription completion sections
-
 // --- Main API Handler ---
 
 export default async function handler(req, res) {
@@ -199,13 +194,6 @@ export default async function handler(req, res) {
       try {
         const transcription = await transcribeFile(tempFilePath);
         
-        // Save transcription to database
-        await supabase.from('transcriptions').insert({
-          user_id: req.session?.userId ?? null,
-          filename: originalName,
-          transcript: transcription,
-        });
-        
         return res.status(200).json({
           success: true,
           transcription: transcription,
@@ -250,51 +238,30 @@ export default async function handler(req, res) {
               chunk: i + 1,
               startTime: i * CHUNK_DURATION,
               endTime: Math.min((i + 1) * CHUNK_DURATION, duration),
-              transcription: `[Error transcribing this chunk: ${error.message}]`
+              transcription: `[Error transcribing chunk ${i + 1}]`
             });
           }
         }
 
         // Combine all transcriptions
-        const fullTranscription = transcriptions
-          .map(chunk => chunk.transcription)
-          .join(' ');
-
-        // Save transcription to database
-        await supabase.from('transcriptions').insert({
-          user_id: req.session?.userId ?? null,
-          filename: originalName,
-          transcript: fullTranscription,
-        });
+        const combinedTranscription = transcriptions
+          .map(t => t.transcription)
+          .join('\n\n');
 
         return res.status(200).json({
           success: true,
-          transcription: fullTranscription,
+          transcription: combinedTranscription,
           duration: duration,
           size: actualSize,
           chunks: transcriptions
         });
-
       } finally {
-        // Clean up all temporary files
+        // Clean up temp files and directory
         await cleanupFiles([tempFilePath, ...chunkPaths], tempDir);
       }
     }
-
   } catch (error) {
-    console.error('Transcription error:', error);
-    
-    // Clean up on error
-    if (tempFilePath) {
-      await cleanupFiles([tempFilePath]);
-    }
-    if (tempDir) {
-      await cleanupFiles([], tempDir);
-    }
-
-    return res.status(500).json({
-      error: 'Transcription failed',
-      details: error.message
-    });
+    console.error('Error processing request:', error);
+    return res.status(500).json({ error: error.message });
   }
 }

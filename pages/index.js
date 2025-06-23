@@ -250,6 +250,26 @@ export default function Home() {
     }
   }
 
+  const handleProviderChange = (e) => {
+    const provider = PROVIDERS.find(p => p.id === e.target.value)
+    setSelectedProvider(provider.id)
+    setSelectedModel(provider.model)
+    addLog(`Provider changed to: ${provider.name}`)
+  }
+
+  const estimateCost = () => {
+    // Return default value during server-side rendering
+    if (typeof window === 'undefined') return '$0.00'
+    
+    const provider = PROVIDERS.find(p => p.id === selectedProvider)
+    if (!provider || !duration) return '$0.00'
+    const hours = duration / 3600
+    return `$${(provider.costPerHour * hours).toFixed(2)}`
+  }
+
+  // Calculate the estimated cost for the current render
+  const estimatedCost = estimateCost()
+
   const handleDownload = () => {
     if (!transcript) return
 
@@ -290,11 +310,7 @@ export default function Home() {
             <select
               id="provider"
               value={selectedProvider}
-              onChange={(e) => {
-                setSelectedProvider(e.target.value)
-                setSelectedModel(PROVIDERS.find(p => p.id === e.target.value).model)
-                addLog(`Provider changed to: ${e.target.value}`)
-              }}
+              onChange={handleProviderChange}
               className="w-full p-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 mb-2"
             >
               {PROVIDERS.map((provider) => (
@@ -306,7 +322,7 @@ export default function Home() {
               <span className="font-mono text-blue-700">{selectedModel}</span>
             </div>
             <div className="cost-estimate text-blue-600 font-semibold mb-2">
-              Estimated Cost: {estimateCost()}
+              Estimated Cost: {estimatedCost}
             </div>
             <ul className="text-xs text-gray-500 list-disc pl-5">
               {PROVIDERS.find(p => p.id === selectedProvider)?.features.map((f, i) => (
