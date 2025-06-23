@@ -5,6 +5,7 @@ import formidable from 'formidable';
 import OpenAI from 'openai';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import { AssemblyAI } from 'assemblyai';
 
 // Configure ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
@@ -12,6 +13,10 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 // --- Configuration ---
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
+});
+
+const assemblyai = new AssemblyAI({
+  apiKey: "4a7f271495744092858169ceb6552716", // Will add a check for ENV VAR later
 });
 
 // Constants
@@ -74,6 +79,28 @@ const transcribeFile = async (filePath) => {
   } catch (error) {
     console.error(`Error transcribing ${path.basename(filePath)}:`, error);
     throw new Error(`Failed to transcribe file: ${error.message}`);
+  }
+};
+
+/**
+ * Transcribes a single audio file using AssemblyAI's API.
+ * @param {string} filePath - Path to the audio file.
+ * @returns {Promise<string>} - The transcription text.
+ */
+const transcribeWithAssemblyAI = async (filePath) => {
+  try {
+    const transcript = await assemblyai.transcripts.transcribe({
+      audio: filePath,
+    });
+
+    if (transcript.status === 'error') {
+      throw new Error(`Transcription failed: ${transcript.error}`);
+    }
+
+    return transcript.text;
+  } catch (error) {
+    console.error(`Error transcribing ${path.basename(filePath)} with AssemblyAI:`, error);
+    throw new Error(`Failed to transcribe file with AssemblyAI: ${error.message}`);
   }
 };
 
@@ -151,11 +178,6 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Check if OpenAI API key is configured
-  if (!process.env.OPENAI_API_KEY) {
-    return res.status(500).json({ error: 'OpenAI API key not configured' });
-  }
-
   const form = formidable({
     maxFileSize: 100 * 1024 * 1024, // 100MB max for upload (we'll check actual size later)
   });
@@ -166,9 +188,22 @@ export default async function handler(req, res) {
   try {
     const [fields, files] = await form.parse(req);
     const audioFile = files.audio?.[0];
+    const transcriptionService = fields.transcriptionService?.[0] || 'openai';
 
     if (!audioFile) {
       return res.status(400).json({ error: 'No audio file uploaded. Please provide an audio file.' });
+    }
+
+    if (transcriptionService === 'openai' && !process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: 'OpenAI API key not configured' });
+    }
+
+    if (transcriptionService === 'assemblyai' && !process.env.ASSEMBLYAI_API_KEY && assemblyai.client.config.apiKey === "4a7f271495744092858169ceb6552716") {
+        // Temporary fallback to user-provided key if no env var is set.
+        // In a real app, you'd want to enforce the env var.
+        console.warn("AssemblyAI API key not found in environment variables. Using hardcoded key as a fallback.");
+    } else if (transcriptionService === 'assemblyai') {
+        assemblyai.client.config.apiKey = process.env.ASSEMBLYAI_API_KEY;
     }
 
     tempFilePath = audioFile.filepath;
@@ -187,9 +222,27 @@ export default async function handler(req, res) {
     const isSmallEnough = actualSize <= MAX_FILE_SIZE;
     const isShortEnough = duration <= MAX_DURATION;
 
+    if (transcriptionService === 'assemblyai') {
+      console.log('Using AssemblyAI for transcription');
+      try {
+        const transcription = await transcribeWithAssemblyAI(tempFilePath);
+        return res.status(200).json({
+          success: true,
+          transcription: transcription,
+          duration: duration,
+          size: actualSize,
+          chunks: null,
+          service: 'assemblyai'
+        });
+      } finally {
+        await cleanupFiles([tempFilePath]);
+      }
+    }
+
+    // OpenAI logic follows
     if (isSmallEnough && isShortEnough) {
       // --- Direct transcription ---
-      console.log('File is small and short enough for direct transcription');
+      console.log('File is small and short enough for direct transcription with OpenAI');
       
       try {
         const transcription = await transcribeFile(tempFilePath);
@@ -207,7 +260,7 @@ export default async function handler(req, res) {
       }
     } else {
       // --- Chunked transcription ---
-      console.log('File requires chunking for transcription');
+      console.log('File requires chunking for transcription with OpenAI');
       
       // Create temporary directory for chunks
       tempDir = path.join(path.dirname(tempFilePath), `chunks_${Date.now()}`);

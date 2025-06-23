@@ -25,6 +25,17 @@ const PROVIDERS = [
       'Supports many languages',
     ],
   },
+  {
+    id: 'assemblyai',
+    name: 'AssemblyAI ($0.25/hr) - Fast and Reliable',
+    model: 'assemblyai',
+    costPerHour: 0.25,
+    features: [
+      'Fast transcription',
+      'Reliable performance',
+      'Good for general use',
+    ],
+  },
 ]
 
 export default function Home() {
@@ -194,6 +205,7 @@ export default function Home() {
 
     const formData = new FormData()
     formData.append('audio', file) // Changed from 'file' to 'audio' to match new API
+    formData.append('transcriptionService', selectedProvider)
 
     try {
       addLog('📤 Uploading file to server...')
