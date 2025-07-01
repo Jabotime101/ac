@@ -16,7 +16,7 @@ const openai = new OpenAI({
 });
 
 const assemblyai = new AssemblyAI({
-  apiKey: "4a7f271495744092858169ceb6552716", // Will add a check for ENV VAR later
+  apiKey: "api key", // Will add a check for ENV VAR later
 });
 
 // Constants
@@ -281,8 +281,10 @@ export default async function handler(req, res) {
       tempDir = path.join(path.dirname(tempFilePath), `chunks_${Date.now()}`);
       await fsPromises.mkdir(tempDir, { recursive: true });
 
+      let chunkPaths = []; // Initialize as empty array
+
       try {
-        const chunkPaths = await splitAudioIntoChunks(tempFilePath, tempDir, duration);
+        chunkPaths = await splitAudioIntoChunks(tempFilePath, tempDir, duration);
         
         console.log(`Created ${chunkPaths.length} chunks, starting transcription...`);
 
@@ -322,6 +324,7 @@ export default async function handler(req, res) {
           service: 'openai'
         });
       } finally {
+        // Clean up temp files and directory - chunkPaths is now always defined
         await cleanupFiles([tempFilePath, ...chunkPaths], tempDir);
       }
     }
