@@ -204,22 +204,38 @@ export default async function handler(req, res) {
     if (transcriptionService === 'assemblyai') {
       console.log('Using AssemblyAI for transcription - Direct file upload');
       
-      if (!process.env.ASSEMBLYAI_API_KEY && assemblyai.client.config.apiKey === "4a7f271495744092858169ceb6552716") {
-        console.warn("AssemblyAI API key not found in environment variables. Using hardcoded key as a fallback.");
-      } else if (process.env.ASSEMBLYAI_API_KEY) {
-        assemblyai.client.config.apiKey = process.env.ASSEMBLYAI_API_KEY;
+      // Create AssemblyAI client with proper API key
+      let assemblyaiClient;
+      if (process.env.ASSEMBLYAI_API_KEY) {
+        assemblyaiClient = new AssemblyAI({
+          apiKey: process.env.ASSEMBLYAI_API_KEY
+        });
+        console.log("Using AssemblyAI API key from environment variables");
+      } else {
+        assemblyaiClient = assemblyai; // Use the hardcoded key from initialization
+        console.warn("AssemblyAI API key not found in environment variables. Using hardcoded key as fallback.");
       }
 
       try {
-        const transcription = await transcribeWithAssemblyAI(tempFilePath);
+        const transcript = await assemblyaiClient.transcripts.transcribe({
+          audio: tempFilePath,
+        });
+
+        if (transcript.status === 'error') {
+          throw new Error(`Transcription failed: ${transcript.error}`);
+        }
+
         return res.status(200).json({
           success: true,
-          transcription: transcription,
+          transcription: transcript.text,
           duration: null, // We don't need duration info for AssemblyAI
           size: fileSize,
           chunks: null,
           service: 'assemblyai'
         });
+      } catch (error) {
+        console.error(`Error transcribing ${originalName} with AssemblyAI:`, error);
+        throw new Error(`Failed to transcribe file with AssemblyAI: ${error.message}`);
       } finally {
         await cleanupFiles([tempFilePath]);
       }
