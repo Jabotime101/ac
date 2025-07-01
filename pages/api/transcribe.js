@@ -179,7 +179,7 @@ export default async function handler(req, res) {
   }
 
   const form = formidable({
-    maxFileSize: 100 * 1024 * 1024, // 100MB max for upload (we'll check actual size later)
+    maxFileSize: 100 * 1024 * 1024, // 100MB max for upload
   });
 
   let tempFilePath;
@@ -194,25 +194,43 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'No audio file uploaded. Please provide an audio file.' });
     }
 
-    if (transcriptionService === 'openai' && !process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: 'OpenAI API key not configured' });
-    }
-
-    if (transcriptionService === 'assemblyai' && !process.env.ASSEMBLYAI_API_KEY && assemblyai.client.config.apiKey === "4a7f271495744092858169ceb6552716") {
-        // Temporary fallback to user-provided key if no env var is set.
-        // In a real app, you'd want to enforce the env var.
-        console.warn("AssemblyAI API key not found in environment variables. Using hardcoded key as a fallback.");
-    } else if (transcriptionService === 'assemblyai') {
-        assemblyai.client.config.apiKey = process.env.ASSEMBLYAI_API_KEY;
-    }
-
     tempFilePath = audioFile.filepath;
     const originalName = audioFile.originalFilename || 'audio';
     const fileSize = audioFile.size;
 
     console.log(`Processing file: ${originalName} (${(fileSize / 1024 / 1024).toFixed(2)} MB)`);
 
-    // Get audio duration and validate file
+    // === ASSEMBLYAI DIRECT PROCESSING (NO FFMPEG) ===
+    if (transcriptionService === 'assemblyai') {
+      console.log('Using AssemblyAI for transcription - Direct file upload');
+      
+      if (!process.env.ASSEMBLYAI_API_KEY && assemblyai.client.config.apiKey === "4a7f271495744092858169ceb6552716") {
+        console.warn("AssemblyAI API key not found in environment variables. Using hardcoded key as a fallback.");
+      } else if (process.env.ASSEMBLYAI_API_KEY) {
+        assemblyai.client.config.apiKey = process.env.ASSEMBLYAI_API_KEY;
+      }
+
+      try {
+        const transcription = await transcribeWithAssemblyAI(tempFilePath);
+        return res.status(200).json({
+          success: true,
+          transcription: transcription,
+          duration: null, // We don't need duration info for AssemblyAI
+          size: fileSize,
+          chunks: null,
+          service: 'assemblyai'
+        });
+      } finally {
+        await cleanupFiles([tempFilePath]);
+      }
+    }
+
+    // === OPENAI PROCESSING (WITH FFMPEG) ===
+    if (transcriptionService === 'openai' && !process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: 'OpenAI API key not configured' });
+    }
+
+    // Get audio duration and validate file - ONLY for OpenAI
     const { duration, size } = await getAudioInfo(tempFilePath);
     const actualSize = size || fileSize;
 
@@ -222,26 +240,8 @@ export default async function handler(req, res) {
     const isSmallEnough = actualSize <= MAX_FILE_SIZE;
     const isShortEnough = duration <= MAX_DURATION;
 
-    if (transcriptionService === 'assemblyai') {
-      console.log('Using AssemblyAI for transcription');
-      try {
-        const transcription = await transcribeWithAssemblyAI(tempFilePath);
-        return res.status(200).json({
-          success: true,
-          transcription: transcription,
-          duration: duration,
-          size: actualSize,
-          chunks: null,
-          service: 'assemblyai'
-        });
-      } finally {
-        await cleanupFiles([tempFilePath]);
-      }
-    }
-
-    // OpenAI logic follows
     if (isSmallEnough && isShortEnough) {
-      // --- Direct transcription ---
+      // --- Direct transcription with OpenAI ---
       console.log('File is small and short enough for direct transcription with OpenAI');
       
       try {
@@ -252,27 +252,24 @@ export default async function handler(req, res) {
           transcription: transcription,
           duration: duration,
           size: actualSize,
-          chunks: null
+          chunks: null,
+          service: 'openai'
         });
       } finally {
-        // Clean up temp file
         await cleanupFiles([tempFilePath]);
       }
     } else {
-      // --- Chunked transcription ---
+      // --- Chunked transcription with OpenAI ---
       console.log('File requires chunking for transcription with OpenAI');
       
-      // Create temporary directory for chunks
       tempDir = path.join(path.dirname(tempFilePath), `chunks_${Date.now()}`);
       await fsPromises.mkdir(tempDir, { recursive: true });
 
       try {
-        // Split audio into chunks
         const chunkPaths = await splitAudioIntoChunks(tempFilePath, tempDir, duration);
         
         console.log(`Created ${chunkPaths.length} chunks, starting transcription...`);
 
-        // Transcribe each chunk
         const transcriptions = [];
         for (let i = 0; i < chunkPaths.length; i++) {
           console.log(`Transcribing chunk ${i + 1}/${chunkPaths.length}...`);
@@ -296,7 +293,6 @@ export default async function handler(req, res) {
           }
         }
 
-        // Combine all transcriptions
         const combinedTranscription = transcriptions
           .map(t => t.transcription)
           .join('\n\n');
@@ -306,10 +302,10 @@ export default async function handler(req, res) {
           transcription: combinedTranscription,
           duration: duration,
           size: actualSize,
-          chunks: transcriptions
+          chunks: transcriptions,
+          service: 'openai'
         });
       } finally {
-        // Clean up temp files and directory
         await cleanupFiles([tempFilePath, ...chunkPaths], tempDir);
       }
     }
